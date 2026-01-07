@@ -11,11 +11,13 @@ export const SUBCONVERTER_ASSETS = {
         { id: 4, name: '肥羊备用后端【vless reality+hy1+hy2】', url: 'sub.d1.mk', is_default: false },
         { id: 5, name: 'nameless13提供', url: 'www.nameless13.com', is_default: false },
         { id: 6, name: 'subconverter作者提供', url: 'sub.xeton.dev', is_default: false },
-        { id: 7, name: 'sub-web作者提供', url: 'api.wcc.best', is_default: false }
+        { id: 7, name: 'sub-web作者提供', url: 'api.wcc.best', is_default: false },
+        { id: 8, name: 'BiuXin', url: 'subapi.xinb.de', is_default: false }
     ],
     configs: [
         // BiuXin (100-399 roughly, mostly ACL4SSR related)
         { id: 99, name: 'BiuXin 识别多地区、CloudFlareCDN 负载均衡 Worker节点专用(与Github同步)', url: 'https://raw.githubusercontent.com/damizai/ACL4SSR/refs/heads/main/Clash/config/ACL4SSR_Online_Full_MultiMode_CF.ini', group: 'ACL4SSR', is_default: true },
+        { id: 100, name: 'BiuXin Custom_Clash.ini(与Github同步)', url: 'https://raw.githubusercontent.com/damizai/Custom_Clash_Rules/main/cfg/Custom_Clash.ini', group: 'ACL4SSR', is_default: true },
         // ACL4SSR Group (100-399 roughly, mostly ACL4SSR related)
         { id: 101, name: 'CM_Online 默认版 识别港美地区(与Github同步)', url: 'https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online.ini', group: 'ACL4SSR', is_default: true },
         { id: 102, name: 'CM_Online_MultiCountry 识别港美地区 负载均衡(与Github同步)', url: 'https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini', group: 'ACL4SSR', is_default: false },
