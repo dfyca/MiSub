@@ -165,6 +165,8 @@ export function useSubscriptions(markDirty) {
 
   function deleteSubscription(subId) {
     dataStore.removeSubscription(subId);
+    // 清理组合订阅中对该订阅源的引用
+    dataStore.removeSubscriptionFromProfiles(subId);
     if (paginatedSubscriptions.value.length === 0 && subsCurrentPage.value > 1) {
       subsCurrentPage.value--;
     }
@@ -175,10 +177,20 @@ export function useSubscriptions(markDirty) {
     // Only remove the subscriptions visible in this composable (i.e. HTTP subs)
     // Avoid removing manual nodes which are also in dataStore but filtered out here
     const idsToRemove = subscriptions.value.map(s => s.id);
+
+    // 如果没有订阅，提示并返回
+    if (idsToRemove.length === 0) {
+      showToast('没有可删除的订阅', 'info');
+      return;
+    }
+
     idsToRemove.forEach(id => dataStore.removeSubscription(id));
+    // 清理组合订阅中对这些订阅源的引用
+    dataStore.removeSubscriptionFromProfiles(idsToRemove);
 
     subsCurrentPage.value = 1;
     markDirty();
+    showToast(`已清空 ${idsToRemove.length} 个订阅`, 'success');
   }
 
   async function addSubscriptionsFromBulk(subs) {
@@ -273,8 +285,9 @@ export function useSubscriptions(markDirty) {
   }
 
   // ========== 定时自动更新功能 ==========
-  const AUTO_UPDATE_INTERVAL_MS = TIMING.AUTO_UPDATE_INTERVAL_MS;
+  const DEFAULT_INTERVAL_MS = TIMING.AUTO_UPDATE_INTERVAL_MS;
   let autoUpdateTimerId = null;
+  let currentIntervalMs = DEFAULT_INTERVAL_MS;
 
   async function autoUpdateAllSubscriptions() {
     try {
@@ -289,18 +302,54 @@ export function useSubscriptions(markDirty) {
     }
   }
 
-  function startAutoUpdate() {
-    if (autoUpdateTimerId) return;
+  function startAutoUpdate(intervalMinutes = null) {
+    // 如果传入间隔，使用传入值；否则从 settings 读取
+    let intervalMs;
+    if (intervalMinutes !== null) {
+      intervalMs = intervalMinutes * 60 * 1000;
+    } else {
+      const settings = dataStore.settings;
+      const settingsInterval = settings?.autoUpdateInterval;
+      intervalMs = (settingsInterval != null && settingsInterval > 0)
+        ? settingsInterval * 60 * 1000
+        : DEFAULT_INTERVAL_MS;
+    }
+
+    // 如果间隔为0，表示禁用自动更新
+    if (intervalMs === 0) {
+      stopAutoUpdate();
+      if (isDev) console.debug('[AutoUpdate] Disabled by user setting');
+      return;
+    }
+
+    // 如果间隔没变且定时器已运行，不需要重启
+    if (autoUpdateTimerId && intervalMs === currentIntervalMs) {
+      return;
+    }
+
+    // 停止旧定时器
+    stopAutoUpdate();
+
+    // 启动新定时器
+    currentIntervalMs = intervalMs;
     autoUpdateTimerId = setInterval(() => {
       void autoUpdateAllSubscriptions();
-    }, AUTO_UPDATE_INTERVAL_MS);
+    }, intervalMs);
+
+    if (isDev) console.debug(`[AutoUpdate] Started with interval: ${intervalMs / 60000} minutes`);
   }
 
   function stopAutoUpdate() {
     if (autoUpdateTimerId) {
       clearInterval(autoUpdateTimerId);
       autoUpdateTimerId = null;
+      if (isDev) console.debug('[AutoUpdate] Stopped');
     }
+  }
+
+  function restartAutoUpdate(intervalMinutes) {
+    stopAutoUpdate();
+    startAutoUpdate(intervalMinutes);
   }
 
   function reorderSubscriptions(newOrder) {
@@ -337,6 +386,7 @@ export function useSubscriptions(markDirty) {
     batchUpdateAllSubscriptions,
     startAutoUpdate,
     stopAutoUpdate,
-    reorderSubscriptions, // Added
+    restartAutoUpdate,
+    reorderSubscriptions,
   };
 }

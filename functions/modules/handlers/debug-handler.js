@@ -6,6 +6,7 @@
 import { StorageFactory } from '../../storage-adapter.js';
 import { createJsonResponse, createErrorResponse } from '../utils.js';
 import { handleSubscriptionNodesRequest } from '../subscription-handler.js';
+import { debugTgNotification } from '../../services/notification-service.js';
 import { parseNodeList, calculateProtocolStats, calculateRegionStats } from '../utils/node-parser.js';
 
 /**
@@ -356,7 +357,7 @@ export async function handlePreviewContentRequest(request, env) {
         } else if (decodedContent.includes('outbounds') && decodedContent.includes('inbounds')) {
             contentInfo.contentType = 'singbox-config';
         } else {
-            const nodeMatches = decodedContent.match(/^(ss|ssr|vmess|vless|trojan|hysteria2?|hy|hy2|tuic|anytls|socks5):\/\//gm);
+            const nodeMatches = decodedContent.match(/^(ss|ssr|vmess|vless|trojan|hysteria2?|hy|hy2|tuic|anytls|socks5|socks):\/\//gm);
             if (nodeMatches) {
                 contentInfo.contentType = 'node-list';
                 contentInfo.nodeCount = nodeMatches.length;
@@ -376,5 +377,170 @@ export async function handlePreviewContentRequest(request, env) {
         });
     } catch (e) {
         return createErrorResponse(`内容预览失败: ${e.message}`, 'DebugHandler', 500);
+    }
+}
+
+/**
+ * 测试Telegram通知
+ * @param {Object} request - HTTP请求对象
+ * @param {Object} env - Cloudflare环境对象
+ * @returns {Promise<Response>} HTTP响应
+ */
+export async function handleTestNotificationRequest(request, env) {
+    if (request.method !== 'POST') {
+        return createErrorResponse('Method Not Allowed', 405);
+    }
+
+    try {
+        const { botToken, chatId } = await request.json();
+        const settings = { BotToken: botToken, ChatID: chatId };
+
+        const result = await debugTgNotification(settings, '🔔 *通知测试* 🔔\n\n这是来自 MiSub 的测试消息，用于验证您的配置是否正确。');
+
+        if (result.success) {
+            return createJsonResponse({ success: true, detail: result.response });
+        } else {
+            return createJsonResponse({ success: false, error: result.error, detail: result.response }, 400);
+        }
+
+    } catch (e) {
+        return createErrorResponse(e.message, 500);
+    }
+}
+
+/**
+ * 测试 SubConverter 后端可用性
+ * @param {Object} request - HTTP请求对象
+ * @param {Object} env - Cloudflare环境对象
+ * @returns {Promise<Response>} HTTP响应
+ */
+export async function handleTestSubconverterRequest(request, env) {
+    if (request.method !== 'POST') {
+        return createErrorResponse('Method Not Allowed', 405);
+    }
+
+    try {
+        const { backend } = await request.json();
+
+        if (!backend || typeof backend !== 'string' || backend.trim() === '') {
+            return createJsonResponse({ success: false, error: '请提供 SubConverter 后端地址' }, 400);
+        }
+
+        const trimmed = backend.trim();
+        const hasProtocol = /^https?:\/\//i.test(trimmed);
+        const baseUrl = hasProtocol ? trimmed : `https://${trimmed}`;
+
+        // 构建后端 URL (通常 SubConverter 的根路径或 /version 端点)
+        let testUrl;
+        try {
+            const urlObj = new URL(baseUrl);
+            // 尝试访问根路径来检测后端是否可用
+            testUrl = urlObj.origin + '/version';
+        } catch (err) {
+            return createJsonResponse({ success: false, error: '无效的后端地址格式' }, 400);
+        }
+
+        const timeout = 10000; // 10秒超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+        let response;
+        let responseTime;
+        const startTime = Date.now();
+
+        try {
+            response = await fetch(testUrl, {
+                method: 'GET',
+                headers: { 'User-Agent': 'MiSub-Backend-Test/1.0' },
+                signal: controller.signal
+            });
+            responseTime = Date.now() - startTime;
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            // 如果 /version 失败，尝试根路径
+            try {
+                const urlObj = new URL(baseUrl);
+                testUrl = urlObj.origin;
+                const fallbackStart = Date.now();
+                response = await fetch(testUrl, {
+                    method: 'GET',
+                    headers: { 'User-Agent': 'MiSub-Backend-Test/1.0' },
+                    signal: controller.signal
+                });
+                responseTime = Date.now() - fallbackStart;
+            } catch (fallbackError) {
+                if (fallbackError.name === 'AbortError') {
+                    return createJsonResponse({
+                        success: false,
+                        error: `连接超时 (${timeout / 1000}秒)`,
+                        detail: { timeout: true, backend: trimmed }
+                    }, 408);
+                }
+                return createJsonResponse({
+                    success: false,
+                    error: `无法连接到后端: ${fallbackError.message}`,
+                    detail: { network: true, backend: trimmed, originalError: fallbackError.message }
+                }, 503);
+            }
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        // 检查响应
+        if (response.ok) {
+            const contentType = response.headers.get('content-type') || '';
+            let versionInfo = null;
+
+            try {
+                const text = await response.text();
+                // 尝试解析版本信息
+                if (contentType.includes('application/json')) {
+                    versionInfo = JSON.parse(text);
+                } else if (text.length < 200) {
+                    versionInfo = text.trim();
+                }
+            } catch (e) {
+                // 忽略解析错误
+            }
+
+            return createJsonResponse({
+                success: true,
+                message: '后端可用',
+                detail: {
+                    backend: trimmed,
+                    responseTime: `${responseTime}ms`,
+                    status: response.status,
+                    version: versionInfo
+                }
+            });
+        } else {
+            // 即使返回非 2xx，也可能是后端在线但路径不对
+            // 对于 SubConverter，即使返回 404 也说明服务器在运行
+            if (response.status === 404 || response.status === 405) {
+                return createJsonResponse({
+                    success: true,
+                    message: '后端可用（但未找到版本信息端点）',
+                    detail: {
+                        backend: trimmed,
+                        responseTime: `${responseTime}ms`,
+                        status: response.status,
+                        note: '服务器响应正常，订阅转换功能应可用'
+                    }
+                });
+            }
+
+            return createJsonResponse({
+                success: false,
+                error: `后端返回错误状态: HTTP ${response.status}`,
+                detail: {
+                    backend: trimmed,
+                    status: response.status,
+                    statusText: response.statusText
+                }
+            }, response.status >= 500 ? 502 : 400);
+        }
+
+    } catch (e) {
+        return createErrorResponse(`测试失败: ${e.message}`, 500);
     }
 }

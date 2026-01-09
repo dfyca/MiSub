@@ -2,10 +2,9 @@
 import { computed, ref, watch } from 'vue';
 import { useToastStore } from '../../stores/toast.js';
 import Modal from '../forms/Modal.vue';
-import AdvancedOptions from './SubscriptionEditModal/AdvancedOptions.vue';
 import EditForm from './SubscriptionEditModal/EditForm.vue';
 import RuleSection from './SubscriptionEditModal/RuleSection.vue';
-
+import AdvancedOptions from './SubscriptionEditModal/AdvancedOptions.vue';
 const props = defineProps({
   show: Boolean,
   isNew: Boolean,
@@ -14,6 +13,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:show', 'confirm']);
 const { showToast } = useToastStore();
+
 
 // === 可视化规则编辑器 ===
 const isAdvancedMode = ref(false);
@@ -24,7 +24,7 @@ const customKeyword = ref('');
 // 预设标签
 const presetRegions = [
   { label: '香港', pattern: '(香港|HK|Hong Kong)', icon: '🇭🇰' },
-  { label: '台湾', pattern: '(台湾|TW|Taiwan)', icon: '🇹🇼' },
+  { label: '台湾', pattern: '(台湾|TW|Taiwan)', icon: '🇨🇳' },
   { label: '日本', pattern: '(日本|JP|Japan)', icon: '🇯🇵' },
   { label: '新加坡', pattern: '(新加坡|SG|Singapore)', icon: '🇸🇬' },
   { label: '美国', pattern: '(美国|US|USA)', icon: '🇺🇸' },
@@ -256,6 +256,8 @@ const syncExcludeRuleScroll = () => {
   excludeRuleHighlight.value.scrollTop = excludeRuleTextarea.value.scrollTop;
   excludeRuleHighlight.value.scrollLeft = excludeRuleTextarea.value.scrollLeft;
 };
+
+
 
 const handleConfirm = () => {
   if (isAdvancedMode.value && excludeRuleState.value.errors.length > 0) {

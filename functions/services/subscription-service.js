@@ -125,36 +125,6 @@ function createConcurrencyLimiter(limit) {
 }
 
 /**
- * 在指定时间内收集尽可能多的 Promise 结果
- * 超时后返回已完成的部分，避免客户端超时
- * @param {Promise[]} promises - Promise 数组
- * @param {number} timeoutMs - 超时时间（毫秒）
- * @returns {Promise<string[]>} - 已完成的结果数组
- */
-async function collectWithinTimeout(promises, timeoutMs) {
-    if (!timeoutMs || timeoutMs <= 0) {
-        return Promise.all(promises);
-    }
-
-    const results = [];
-    let closed = false;
-
-    const wrapped = promises.map(p =>
-        Promise.resolve(p)
-            .then(value => { if (!closed) results.push(value); })
-            .catch(() => { if (!closed) results.push(''); })
-    );
-
-    await Promise.race([
-        Promise.allSettled(wrapped),
-        new Promise(resolve => setTimeout(resolve, timeoutMs))
-    ]);
-
-    closed = true;
-    return results.slice();
-}
-
-/**
  * 生成组合节点列表
  * @param {Object} context - 请求上下文
  * @param {Object} config - 配置对象
@@ -163,21 +133,19 @@ async function collectWithinTimeout(promises, timeoutMs) {
  * @param {string} prependedContent - 预置内容
  * @param {Object} profilePrefixSettings - 配置文件前缀设置
  * @param {boolean} debug - 是否启用调试日志
- * @param {Object|null} fetchPolicy - 抓取策略（用于区分快路径/后台刷新）
- * @param {number} fetchPolicy.timeoutMs - 单次请求超时（毫秒）
- * @param {number} fetchPolicy.maxRetries - 最大重试次数
- * @param {number} fetchPolicy.concurrency - 并发数
- * @param {number} fetchPolicy.overallTimeoutMs - 本次组合生成的总预算（毫秒）
  * @returns {Promise<string>} - 组合后的节点列表
  */
-export async function generateCombinedNodeList(context, config, userAgent, misubs, prependedContent = '', profilePrefixSettings = null, debug = false, fetchPolicy = null) {
+export async function generateCombinedNodeList(context, config, userAgent, misubs, prependedContent = '', profilePrefixSettings = null, debug = false) {
     // 判断是否启用手动节点前缀
     const shouldPrependManualNodes = profilePrefixSettings?.enableManualNodes ?? true;
 
     // 判断是否需要添加 Emoji：当模板重命名启用且模板包含 {emoji} 时启用
     const nodeTransformConfig = profilePrefixSettings?.nodeTransform;
     const templateEnabled = nodeTransformConfig?.enabled && nodeTransformConfig?.rename?.template?.enabled;
-    const templateContainsEmoji = templateEnabled && (nodeTransformConfig?.rename?.template?.template || '').includes('{emoji}');
+    // 使用默认模板 '{emoji}{region}-{protocol}-{index}'，如果用户未自定义模板
+    const defaultTemplate = '{emoji}{region}-{protocol}-{index}';
+    const effectiveTemplate = nodeTransformConfig?.rename?.template?.template || defaultTemplate;
+    const templateContainsEmoji = templateEnabled && effectiveTemplate.includes('{emoji}');
     const shouldAddEmoji = templateContainsEmoji;
 
     // 手动节点前缀文本
@@ -207,14 +175,7 @@ export async function generateCombinedNodeList(context, config, userAgent, misub
     }).join('\n');
 
     const httpSubs = misubs.filter(sub => sub.url.toLowerCase().startsWith('http'));
-
-    // 从 fetchPolicy 获取配置，支持快慢路径分离
-    const requestTimeoutMs = fetchPolicy?.timeoutMs ?? FETCH_CONFIG.TIMEOUT;
-    const requestMaxRetries = fetchPolicy?.maxRetries ?? FETCH_CONFIG.MAX_RETRIES;
-    const concurrency = fetchPolicy?.concurrency ?? FETCH_CONFIG.CONCURRENCY;
-    const overallTimeoutMs = fetchPolicy?.overallTimeoutMs;
-
-    const limiter = createConcurrencyLimiter(concurrency);
+    const limiter = createConcurrencyLimiter(FETCH_CONFIG.CONCURRENCY);
 
     /**
      * 获取单个订阅内容
@@ -237,9 +198,6 @@ export async function generateCombinedNodeList(context, config, userAgent, misub
                     allowUntrusted: true,
                     validateCertificate: false
                 }
-            }, {
-                timeout: requestTimeoutMs,
-                maxRetries: requestMaxRetries
             });
 
             if (!response.ok) {
@@ -286,14 +244,7 @@ export async function generateCombinedNodeList(context, config, userAgent, misub
 
     // 使用并发控制器限制同时请求数量，避免网络拥塞
     const subPromises = httpSubs.map(sub => limiter(() => fetchSingleSubscription(sub)));
-
-    // 等待所有订阅源拉取完成（完整拉取，不使用总预算截断）
     const processedSubContents = await Promise.all(subPromises);
-
-    if (debug) {
-        console.debug(`[DEBUG] Fetch completed: timeout=${requestTimeoutMs}ms, retries=${requestMaxRetries}, concurrency=${concurrency}, total=${httpSubs.length}`);
-    }
-
     const combinedLines = (processedManualNodes + '\n' + processedSubContents.join('\n'))
         .split('\n')
         .map(line => line.trim())

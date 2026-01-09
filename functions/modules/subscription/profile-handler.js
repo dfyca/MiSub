@@ -86,23 +86,33 @@ export async function handleProfileMode(request, env, profileId, userAgent, appl
         const nodeUrls = allNodes.map(node => node.url);
 
         // 应用节点转换管道
+        // 使用默认模板 '{emoji}{region}-{protocol}-{index}'，如果用户未自定义模板
+        const defaultTemplate = '{emoji}{region}-{protocol}-{index}';
+        const effectiveTemplate = profile.nodeTransform.rename?.template?.template || defaultTemplate;
         const transformedUrls = applyNodeTransformPipeline(nodeUrls, {
             ...profile.nodeTransform,
-            enableEmoji: profile.nodeTransform.rename?.template?.template?.includes('{emoji}') || false
+            enableEmoji: effectiveTemplate.includes('{emoji}')
         });
 
-        // 更新节点名称
-        processedNodes = allNodes.map((node, index) => {
-            if (transformedUrls[index]) {
-                // 从转换后的 URL 中提取新的名称
-                const newNodeInfo = parseNodeInfo(transformedUrls[index]);
-                return {
-                    ...node,
-                    name: newNodeInfo.name,
-                    url: transformedUrls[index]
-                };
-            }
-            return node;
+        // 重要修复：由于节点转换管道可能会重新排序节点，
+        // 不能用原始索引匹配转换后的 URL，必须从转换后的 URL 重新解析所有节点信息
+        processedNodes = transformedUrls.map(transformedUrl => {
+            const nodeInfo = parseNodeInfo(transformedUrl);
+            // 尝试找到原始节点以保留 subscriptionName
+            const originalNode = allNodes.find(n => {
+                // 通过 URL 的核心部分（服务器和端口）进行匹配
+                try {
+                    const origUrl = new URL(n.url);
+                    const transUrl = new URL(transformedUrl);
+                    return origUrl.hostname === transUrl.hostname && origUrl.port === transUrl.port;
+                } catch {
+                    return false;
+                }
+            });
+            return {
+                ...nodeInfo,
+                subscriptionName: originalNode?.subscriptionName || nodeInfo.subscriptionName || '未知'
+            };
         });
     }
 
